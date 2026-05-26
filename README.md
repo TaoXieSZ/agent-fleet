@@ -13,6 +13,10 @@ You name a ship, give an order, the daemon types the verbatim command into
 the right cmux pane on your confirm. No retyping, no window-hopping, no
 hunting for the right tab.
 
+> 📐 **Architecture:** see [`docs/architecture.md`](docs/architecture.md) for
+> diagrams of the system, the stage→confirm flow, the board read loop, and
+> the wire protocol.
+
 ---
 
 ## Why this exists
