@@ -13,7 +13,7 @@ mockable.
 Targeting binds to the stable **surface UUID** (`id`), never the positional
 `surface:N` ref (refs shift as panes open/close).
 
-The board's own pane (running `control_plane.board`) and browser surfaces (the
+The board's own pane (running `agent_fleet.board`) and browser surfaces (the
 voice agent) are excluded by a deterministic filter, so the board and the daemon
 compute the SAME numbering independently.
 
