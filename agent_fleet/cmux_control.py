@@ -267,6 +267,56 @@ def _last_nonempty(text: str) -> str:
     return nonempty[-1].strip() if nonempty else ""
 
 
+# Noise lines a board-status reader should skip — Claude Code's persistent
+# bottom banners, the OMC HUD, the cmux/shell horizontal-rule separators, and
+# bare prompt characters that carry no content. The smart-status walker
+# returns the most recent line that ISN'T noise, so the board shows what the
+# pane is actually doing (a recap, a response, a prompt, an activity verb)
+# instead of the fixed banner.
+import re as _re
+_NOISE_PATTERNS = [
+    _re.compile(r"⏵⏵\s*bypass\s*permissions"),
+    _re.compile(r"←\s*for\s*agents"),
+    _re.compile(r"^\[OMC#"),
+    _re.compile(r"^[─━═╌╍┄┅\-]{8,}$"),       # horizontal rules
+    _re.compile(r"^[❯>]\xa0?$"),               # bare prompt char only
+]
+# Priority labels — when multiple meaningful lines are present, prefer those
+# that summarise *what's happening*. `※` is Claude Code's "recap", `✻` is the
+# spinner verb ("Brewed for 7s"). Both beat raw response/prompt lines.
+_PREFERRED_HEADS = ("※", "✻")
+
+
+def _smart_status(text: str, scan_lines: int = 60) -> str:
+    """Most informative status line for a pane's last `scan_lines` lines.
+
+    Walks the tail in reverse, dropping noise (banner, HUD, separators), and
+    returns the first meaningful line — preferring a recap (`※`) or activity
+    verb (`✻`) over a raw prompt/response if one appears within the window.
+    """
+    lines = [ln.rstrip() for ln in text.splitlines() if ln.strip()]
+    if not lines:
+        return ""
+    tail = lines[-scan_lines:]
+
+    def is_noise(s: str) -> bool:
+        return any(p.search(s) for p in _NOISE_PATTERNS)
+
+    # Pass 1: preferred summary lines (most recent first).
+    for ln in reversed(tail):
+        s = ln.strip()
+        if is_noise(s):
+            continue
+        if s[:1] in _PREFERRED_HEADS:
+            return s
+    # Pass 2: any non-noise line.
+    for ln in reversed(tail):
+        s = ln.strip()
+        if not is_noise(s):
+            return s
+    return tail[-1].strip()
+
+
 def _default_runner(argv: Sequence[str]) -> "tuple[int, str, str]":
     p = subprocess.run(list(argv), capture_output=True, text=True)
     return p.returncode, p.stdout, p.stderr
@@ -346,8 +396,13 @@ class CmuxClient:
             return ""
 
     def read_surface(self, surface: str) -> str:
-        """Last non-empty line of a surface's screen — the board's status line."""
-        return _last_nonempty(self.read_surface_text(surface))
+        """Most informative recent status line — what the pane is actually doing.
+
+        Skips Claude Code's persistent bottom banner, the OMC HUD, separator
+        rules, and bare prompts; prefers a Claude Code recap (`※`) or activity
+        verb (`✻`) over a raw prompt/response line.
+        """
+        return _smart_status(self.read_surface_text(surface))
 
     def route(self, target, text: str) -> str:
         """Focus the targeted ship, type `text` verbatim, and submit (Enter).
