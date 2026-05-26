@@ -13,8 +13,8 @@ stage_route / confirm_route / cancel_route actions the voice and gesture paths
 use, see tools/buddy_core/core.py). The `reply` is rendered as the agent's
 natural-language response.
 
-  ~/.cache/buddy-venv/bin/python -m control_plane.chat            # REPL
-  ~/.cache/buddy-venv/bin/python -m control_plane.chat -q "二号 跑 ls"  # one-shot
+  ~/.cache/buddy-venv/bin/python -m agent_fleet.chat            # REPL
+  ~/.cache/buddy-venv/bin/python -m agent_fleet.chat -q "二号 跑 ls"  # one-shot
 
 Deps (in buddy-venv): rich · prompt_toolkit.
 """
@@ -50,7 +50,7 @@ except ImportError:
         "Missing deps. Install:\n"
         "  ~/.cache/buddy-venv/bin/pip install rich prompt_toolkit\n"
         "Then run with that interpreter:\n"
-        "  ~/.cache/buddy-venv/bin/python -m control_plane.chat\n"
+        "  ~/.cache/buddy-venv/bin/python -m agent_fleet.chat\n"
     )
     raise SystemExit(1) from None
 

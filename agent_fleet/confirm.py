@@ -4,8 +4,8 @@ The keyboard/CLI fallback for the thumbs-up gesture — and what makes the
 voice->stage->commit loop testable without the camera. Talks to the daemon's
 unix socket (same `confirm_route`/`cancel_route` actions the gesture path uses).
 
-  python -m control_plane.confirm           # 👍 commit the staged command
-  python -m control_plane.confirm cancel     # 👎 cancel it
+  python -m agent_fleet.confirm           # 👍 commit the staged command
+  python -m agent_fleet.confirm cancel     # 👎 cancel it
 """
 from __future__ import annotations
 

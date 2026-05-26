@@ -5,7 +5,7 @@ speech; auto-confirm = the thumbs-up gesture. Exercises the real CmuxClient +
 RouteStager against a THROWAWAY cmux workspace (created + closed here), so no
 real session is touched.
 
-  python tools/control_plane/demo.py
+  python agent_fleet/demo.py
 """
 from __future__ import annotations
 

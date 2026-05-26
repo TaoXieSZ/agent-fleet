@@ -5,7 +5,7 @@ reads it back, asserts the marker appears, then closes ONLY that workspace.
 Never sends to or closes any pre-existing workspace — all operations target the
 throwaway's own surface/workspace UUID.
 
-Run:  python -m control_plane.smoke_test   (or python tools/control_plane/smoke_test.py)
+Run:  python -m agent_fleet.smoke_test   (or python agent_fleet/smoke_test.py)
 Skips cleanly (exit 0) when cmux is not installed.
 """
 from __future__ import annotations

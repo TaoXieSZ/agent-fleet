@@ -8,20 +8,20 @@ markers (`2号` / `第二个` / `session 2`), or a `--then` follow-up that binds
 the previous bare nickname/number to the next line.
 
   # one-shot (stage + commit — the fastest dev loop)
-  python -m control_plane.say -y "alpha echo hi"
-  python -m control_plane.say -y "bravo git status"
+  python -m agent_fleet.say -y "alpha echo hi"
+  python -m agent_fleet.say -y "bravo git status"
 
   # legacy number markers still work (back-compat with the voice path)
-  python -m control_plane.say -y "二号 git status"
+  python -m agent_fleet.say -y "二号 git status"
 
   # stage only (then 👍 / confirm.py to commit, mirrors the safety gate)
-  python -m control_plane.say "alpha echo hi"
+  python -m agent_fleet.say "alpha echo hi"
 
   # split across two inputs (two-step dictation)
-  python -m control_plane.say -y --then "echo hi" "alpha"
+  python -m agent_fleet.say -y --then "echo hi" "alpha"
 
   # REPL — type lines like the captain would speak them
-  python -m control_plane.say --repl
+  python -m agent_fleet.say --repl
 """
 from __future__ import annotations
 

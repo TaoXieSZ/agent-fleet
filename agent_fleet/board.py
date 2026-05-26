@@ -1,8 +1,8 @@
 """Mac-side session board: numbered cmux sessions + a status line each.
 
-  python -m control_plane.board          # one-shot text board
-  python -m control_plane.board --watch  # live board, auto-refresh (glanceable)
-  python -m control_plane.board --json   # machine-readable
+  python -m agent_fleet.board          # one-shot text board
+  python -m agent_fleet.board --watch  # live board, auto-refresh (glanceable)
+  python -m agent_fleet.board --json   # machine-readable
 
 The numbers shown here are what you say to the voice secretary ("two, run the
 tests"). Status is each session's last non-empty screen line (via read-screen).
