@@ -17,9 +17,7 @@ import sys
 import time
 from datetime import datetime
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from control_plane.cmux_control import (  # noqa: E402
+from agent_fleet.cmux_control import (  # noqa: E402
     BOARD_REGISTRY_DIR,
     CmuxClient,
     DEFAULT_CMUX,
