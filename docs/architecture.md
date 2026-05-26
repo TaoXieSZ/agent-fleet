@@ -9,6 +9,12 @@ that can open a Unix socket is a valid driver.
 
 The whole system is ~7 small modules. The diagrams below show how they fit.
 
+> 📐 **Editable / higher-fidelity versions** of all three diagrams live as
+> Excalidraw source files in [`diagrams/`](diagrams/) — drag any
+> `.excalidraw` file into <https://excalidraw.com> to view or remix.
+> Run [`diagrams/generate.py`](diagrams/generate.py) to regenerate after
+> layout tweaks.
+
 ## System view
 
 ```mermaid
