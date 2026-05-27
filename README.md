@@ -40,19 +40,31 @@ agent-fleet 把寻址层修好了：
 ## 看板样例（每 2 秒刷新）
 
 ```
-FLEET BOARD                                     14:32:05
-────────────────────────────────────────────────────────
-  alpha   OpenSourceProjects · hi   ➜ ~/repos/app
-        ※ recap: 调查 c081 部署失败
-* bravo   tools · test-runner       ➜ ~/repos/lib
-        ✻ Brewed for 7s
-  charlie deploy-bot                ➜ ~/repos/infra
-        ⏺ 已推送到 staging，健康检查通过。
-────────────────────────────────────────────────────────
-say "alpha <cmd>" / "bravo …"  →  👍  /  confirm.py
+┌ FLEET BOARD ───────────────────────────────────── 14:32:05 ┐
+ ⚡ 2/3 active · 5h max 24% (alpha) · ctx max 12% (bravo)
+▶ alpha   agent-fleet · abc                          ctx 5% · 5h 24%
+│    ➜ ~/OpenSourceProjects/agent-fleet
+│    ❯ run pytest
+│    ✻ Brewed for 7s
+│    41 passed in 0.04s
+──────────────────────────────────────────────────────────────
+  bravo   kaggle · 123                                ctx 12% · 5h 8%
+     ➜ ~/kaggle-dir
+     ⏺ Done. 41 passed.
+     
+  lima    ~/OpenSourceProjects
+     ➜ ~/OpenSourceProjects
+     
+├ 3 ships · 1 focused · 0 staged ─────────────────────────────┤
+└ say "alpha <cmd>" / "bravo …"  →  👍  /  confirm.py ────────┘
 ```
 
-`*` = 当前焦点。状态行从 pane 自己的输出里抓，已经过滤掉 banner 和 HUD。
+`▶` + 反白昵称 = 当前焦点；焦点船每行 body 左侧 cyan `│` 贯通整张卡。
+顶部 `⚡` 行是全舰队聚合（active 数 + 5h/ctx 用量最高的船）；底部
+`N ships · K focused · 0 staged` 来自 daemon `status_route` 实时查询
+（daemon 没起的话最后一段会自动消失）。状态行从 pane 自己的输出里抓
+（过滤掉 banner / HUD / cmux 分隔规则）；每卡底部 dim 三行是该 pane
+最近的非-glyph 原始输出（shell 实况、build 进度等）。
 
 ## 快速上手
 
@@ -104,7 +116,8 @@ agent_fleet/fleet_layout.sh
 | **大副（First Mate）** | `chat.py` 里那个把你的人话转成路由动作的 LLM 人格。 |
 | **Daemon（守护进程）** | Unix-socket broker：同时只持有一条暂存命令，按你的 confirm 才发出去。stage→confirm 拆开是安全门。 |
 
-昵称持久化在 `~/.cache/agent-fleet/nicknames.json` 里，按 surface UUID 索引。
+昵称持久化在 `~/.cache/control-plane/nicknames.json` 里（路径继承自上游 fork；
+`AGENT_FLEET_NICKNAMES_PATH` 可覆盖），按 surface UUID 索引。
 同一个 registry **绝不回收**已分配过的名字——船关掉，它的名字也永久退役，
 将来的新船不会继承一个旧关联。
 
@@ -122,6 +135,10 @@ agent_fleet/fleet_layout.sh
 
 {"action": "cancel_route"}
   → {"ok": true, "fired": true}
+
+{"action": "status_route"}
+  → {"ok": true, "staged": {"target": "alpha", "text": "pytest", "age_s": 4.2}}
+  // or {"staged": null} when nothing is pending
 ```
 
 `target` 可以是昵称（`"alpha"`）、无歧义前缀（`"alph"`），或为兼容旧客户端
@@ -132,10 +149,11 @@ agent_fleet/fleet_layout.sh
 
 ```
 agent_fleet/
-  cmux_control.py   # 跨窗口枚举 + 昵称 + 智能状态
-  stager.py         # stage→confirm/cancel 状态机（TTL，last-wins）
-  daemon.py         # Unix-socket broker——长跑进程
-  board.py          # 文本 + 实时看板（--watch）
+  cmux_control.py   # 跨窗口枚举 + 昵称 registry + 智能状态 + workspace.rename
+  stager.py         # stage→confirm/cancel 状态机（TTL，last-wins，status() 快照）
+  daemon.py         # Unix-socket broker（stage/confirm/cancel/status_route）
+  board.py          # 实时 TUI 看板：box-corner 边框 + metrics 行 + 焦点 │ + tail 预览
+  clawd.py          # 可选角色渲染器（Pack / Kitty / BlockArt，默认关）
   say.py            # 键盘驱动（解析 "alpha 跑 ls"）
   confirm.py        # confirm / cancel CLI（手势的键盘替身）
   chat.py           # Codex 风 LLM REPL，大副人格
@@ -164,6 +182,20 @@ tests/              # 33 个纯 Python 单测，不需要 cmux
 - chat.py 里可选的 LLM：`$PATH` 上的 `claude` CLI（直接用你的 Claude Code
   订阅，通过 `--print --json-schema`）。要换 backend？改 `chat.py` 里一个
   `_call_claude` 函数即可。
+
+## 环境变量
+
+所有变量都有合理默认；设 `=0` 关掉一个开关，或换路径覆盖。
+
+| 变量 | 默认 | 作用 |
+| --- | --- | --- |
+| `AGENT_FLEET_SOCKET` | `/tmp/agent-fleet.sock` | daemon Unix-socket 路径；所有客户端（say / confirm / chat / board）共用。 |
+| `AGENT_FLEET_NICKNAMES_PATH` | `~/.cache/control-plane/nicknames.json` | NATO 昵称持久化文件。同一 registry 内昵称**永不回收**。 |
+| `AGENT_FLEET_BOARD_REGISTRY` | `~/.cache/control-plane/board-surfaces/` | live `board.py --watch` 自注册目录（一文件一 surface UUID），用于排除自身。 |
+| `AGENT_FLEET_SYNC_TITLES` | `1` | board `--watch` 是否把船昵称同步到 cmux **workspace title**（`"alpha · <原 title>"`）。`=0` 关掉。仅 single-ship workspace 被改；多 pane workspace 跳过。 |
+| `AGENT_FLEET_BANNER` | `1` | board 启动时是否打印 `⚓ agent-fleet vX · N ships detected · daemon ok` 单行 banner（~1s 后被 `_CLEAR` 抹掉）。`=0` 关掉。 |
+| `AGENT_FLEET_CLAWD` | _unset_ | 角色渲染器开关：`pack` / `kitty` / `block`。默认不开。详见 [`agent_fleet/clawd.py`](agent_fleet/clawd.py)。 |
+| `AGENT_FLEET_CLAWD_ASSETS` | _unset_ | 配合 `AGENT_FLEET_CLAWD=kitty\|block` 用——指向 clawd-on-desk GIF 资产目录（资产**不打包**，许可证原因）。 |
 
 ## 测试
 

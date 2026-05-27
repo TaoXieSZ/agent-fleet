@@ -185,6 +185,7 @@ closed.
 | `stage_route`   | `{action, target, text}` — `target` is nickname / prefix / int | `{ok: true}` or `{ok:false, error}`   |
 | `confirm_route` | `{action}`                                                 | `{ok: true, fired: bool}`             |
 | `cancel_route`  | `{action}`                                                 | `{ok: true, fired: bool}`             |
+| `status_route`  | `{action}`                                                 | `{ok: true, staged: {target, text, age_s}\|null}` |
 
 `fired:false` from confirm/cancel means there was nothing pending (TTL
 expired, or it was already confirmed/cancelled by another client).

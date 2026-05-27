@@ -6,6 +6,67 @@ pre-1.0 so all entries live under **Unreleased** for now.
 
 ## [Unreleased]
 
+### Added (2026-05-27 board v2 — opt-board-tui closeout)
+
+- **Nickname → workspace title sync** (`cmux_control.compute_workspace_renames`
+  + `CmuxClient.sync_workspace_titles`, called by `board.watch` per tick,
+  [718e2c5](https://github.com/TaoXieSZ/agent-fleet/commit/718e2c5)).
+  cmux exposes `workspace.rename` but no `surface.rename`, so the per-
+  surface nickname is pushed into the owning workspace's title as
+  `"alpha · <original>"`. Only single-ship workspaces are renamed
+  (multi-pane is ambiguous, skipped in v1). Idempotent via
+  `_strip_nick_prefix` so opening the board twice doesn't accumulate
+  `alpha · alpha · …`. Visible in cmux's workspace sidebar / switcher
+  (the top tab strip shows *surface* titles, which cmux exposes no RPC
+  to rename). Disable with `AGENT_FLEET_SYNC_TITLES=0`.
+
+- **Box-corner TUI + status bar** ([718e2c5]). Header
+  `┌─ FLEET BOARD ─── 14:32:05 ─┐`, footer
+  `└─ say "alpha <cmd>" / "bravo …"  →  👍  /  confirm.py ─┘`, and a
+  status bar between body and footer:
+  `├ N ships · K focused · 0 staged ┤`.
+
+- **Full-card focus accent** ([718e2c5]). Focused card body rows are
+  prefixed with a bold cyan `│` so the focus indicator extends down
+  the whole card instead of dying at the L1 nickname (`_INDENT_FOCUS`).
+
+- **Per-card tail preview + min-height padding** ([718e2c5]).
+  `PaneDetails.tail` carries the last 3 non-glyph lines of each pane,
+  dimmed below the curated signals. Bare-shell ships (lima-style) gain
+  visible context instead of collapsing to one cwd line.
+  `_MIN_CARD_HEIGHT = 4` keeps the grid lined up.
+
+- **Visual-width-aware truncation (CJK / emoji)** ([718e2c5]).
+  `_vis_width` / `_truncate_vis` / `_ljust_vis` use
+  `unicodedata.east_asian_width` to size in terminal columns instead of
+  code points. Fixes the HUD chip wrap on CJK-titled cards (the
+  `hotel s\nn 20.6h` bug) and aligns the footer `┘` corner with the
+  `👍` emoji (was off by one column).
+
+- **`status_route` daemon action + 0-staged segment**
+  (`stager.RouteStager.status()`, `daemon.status_route`,
+  `board._query_daemon_status`, [718e2c5]). New socket action returns
+  `{"ok":true, "staged": {target, text, age_s}|null}`. Board queries
+  per tick (0.3s timeout, fail-quiet) and folds into the counts line:
+  daemon down → segment dropped; idle → `0 staged`; pending →
+  `1 staged: alpha (4s)`.
+
+- **Global metrics row** ([c60594a](https://github.com/TaoXieSZ/agent-fleet/commit/c60594a)).
+  One dense line under the top border:
+  `⚡ K/N active · 5h max X% (ship) · ctx max X% (ship)`. Surfaces top
+  rate-limit / context-window consumer at a glance.
+  `_parse_hud_pcts` extracts %s from each card's HUD chip; row is
+  dropped when there's nothing useful to aggregate.
+
+- **Startup banner** ([c60594a]). One-line sanity check before the
+  watch loop's first `_CLEAR`:
+  `⚓ agent-fleet v0.1.0 · 5 ships detected · daemon ok`.
+  Disable with `AGENT_FLEET_BANNER=0`.
+
+- **CLAUDE.md** ([bf33bde](https://github.com/TaoXieSZ/agent-fleet/commit/bf33bde)).
+  Project guide for future Claude Code sessions: commands, per-module
+  architecture, wire protocol, invariants, state locations.
+
 ### Added (2026-05-26 / 27)
 
 - **Opt-in Clawd character renderer** (`agent_fleet/clawd.py`,
@@ -96,13 +157,16 @@ pre-1.0 so all entries live under **Unreleased** for now.
 
 ## Roadmap
 
-Tracked as session TODOs (`opt-board-tui`, `hook-voice`,
+Tracked as session TODOs (`opt-board-tui` ✅, `hook-voice`,
 `build-dashboard`):
 
-1. **Board visual polish** — bring the terminal board up to Claude
+1. ~~**Board visual polish** — bring the terminal board up to Claude
    Code CLI tier: box drawing borders, full-row focus highlight,
    bottom command-hint bar, optional startup banner, compact status
-   bar (`N ships · 1 focused · 0 staged`).
+   bar (`N ships · 1 focused · 0 staged`).~~ **Done 2026-05-27** —
+   see the 2026-05-27 entries above. All five sub-items shipped;
+   plus per-card tail preview, visual-width-aware CJK truncation,
+   and a global metrics row that wasn't on the original list.
 2. **End-to-end voice path** — wire buddy-voice / Agora ConvoAI
    Path B through to the live daemon socket. Backend protocol is
    ready; the parser + persona already support nicknames + two-step
