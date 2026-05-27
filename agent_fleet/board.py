@@ -197,6 +197,53 @@ def _ljust_vis(s: str, max_w: int) -> str:
     return s + (" " * pad)
 
 
+import re as _re
+
+# Pulls "ctx 5%" / "5h 24%" / "wk 5%" out of a HUD chip (already-formatted by
+# cmux_control._parse_hud). `sn` is left out — it's a duration, not a %.
+_HUD_PCT_RE = _re.compile(r"\b(ctx|5h|wk)\s+(\d+)%")
+
+
+def _parse_hud_pcts(hud: str) -> dict[str, int]:
+    return {m.group(1): int(m.group(2)) for m in _HUD_PCT_RE.finditer(hud or "")}
+
+
+def _metrics_line(rows: list[dict]) -> str:
+    """Fleet-wide one-liner: who's burning, who's active. Empty when nothing useful.
+
+    Aggregates surfaced:
+      - `K/N active`        — ships with any live signal (activity/response/prompt)
+      - `5h max X% (ship)`  — highest 5-hour rate-limit consumer in the fleet
+      - `ctx max X% (ship)` — highest context-window consumer
+
+    Skipped when there are no rows, no HUDs to parse, and no live signals —
+    rather than printing a useless `0/0 active` line.
+    """
+    if not rows:
+        return ""
+    n = len(rows)
+    active = sum(1 for r in rows
+                 if r.get("activity") or r.get("response") or r.get("prompt"))
+    # Best (nickname, pct) per HUD key, or None if no ship reports that key.
+    best: dict[str, tuple[str, int]] = {}
+    for r in rows:
+        nick = r.get("nickname") or "?"
+        for key, pct in _parse_hud_pcts(r.get("hud") or "").items():
+            cur = best.get(key)
+            if cur is None or pct > cur[1]:
+                best[key] = (nick, pct)
+    parts: list[str] = [f"{active}/{n} active"]
+    if "5h" in best:
+        parts.append(f"5h max {best['5h'][1]}% ({best['5h'][0]})")
+    if "ctx" in best:
+        parts.append(f"ctx max {best['ctx'][1]}% ({best['ctx'][0]})")
+    # Single-token "K/N active" with no HUD context is too sparse to be worth
+    # the row — drop it when no ship has reported any HUD percentage.
+    if len(parts) == 1 and active == 0:
+        return ""
+    return " · ".join(parts)
+
+
 def _counts_line(rows: list[dict], daemon_reply: "Optional[dict]" = None) -> str:
     """Footer status: `N ships · K focused [· staged-fragment]`.
 
@@ -261,6 +308,15 @@ def render_board(rows: list[dict], width: int = _WIDTH, color: bool = True,
         )
     else:
         out.append(header_plain)
+
+    # Global metrics row (D): one dense line under the header summarising
+    # the whole fleet — active count + top 5h and ctx consumers. Renderer
+    # mode owns its own layout (image cards beside text), so skip there.
+    metrics = _metrics_line(rows) if renderer is None else ""
+    if metrics:
+        prefix = " ⚡ "
+        line = f"{prefix}{metrics}"
+        out.append(_wrap(line, _DIM) if color else line)
 
     if not rows:
         out.append(_wrap("  (no cmux sessions)", _DIM) if color else "  (no cmux sessions)")
@@ -404,6 +460,26 @@ def register_self_as_board(surface_id: str) -> None:
     atexit.register(lambda: marker.unlink(missing_ok=True))
 
 
+def _startup_banner(client) -> str:
+    """One-line summary printed before the first board frame.
+
+    Lives in scrollback for ~1.5s until the first `_CLEAR` wipes the screen,
+    so the captain sees the version + a sanity check (ships detected, daemon
+    reachable?) before the live board takes over.
+    """
+    try:
+        from importlib.metadata import version as _version
+        v = _version("agent-fleet")
+    except Exception:  # noqa: BLE001 — not installed editable, fall back gracefully
+        v = "dev"
+    try:
+        n = len(client.list_sessions())
+    except Exception:  # noqa: BLE001
+        n = "?"
+    daemon = "ok" if _query_daemon_status() is not None else "down"
+    return f"⚓ agent-fleet v{v} · {n} ships detected · daemon {daemon}"
+
+
 def _query_daemon_status() -> "Optional[dict]":
     """Best-effort `status_route` query — returns the parsed reply or None.
 
@@ -450,6 +526,12 @@ def watch(client, interval: float = 2.0, color: bool = True,
     if renderer is not None:
         renderer.preload()  # avoid first-frame stutter from cold PNG decode
     sync_titles = os.environ.get("AGENT_FLEET_SYNC_TITLES", "1") != "0"
+    show_banner = os.environ.get("AGENT_FLEET_BANNER", "1") != "0"
+    if show_banner:
+        banner = _startup_banner(client)
+        sys.stdout.write((_wrap(banner, _DIM) if color else banner) + "\n")
+        sys.stdout.flush()
+        time.sleep(1.0)  # let captain catch the version + sanity line before _CLEAR
     try:
         if color:
             sys.stdout.write(_HIDE)
