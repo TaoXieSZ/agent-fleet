@@ -117,3 +117,25 @@ def test_concurrent_confirm_and_stage_no_crash():
         t.join()
     # No assertion on counts (inherently racy) — the point is no crash/deadlock.
     assert isinstance(fired, list)
+
+
+def test_status_returns_none_when_nothing_pending():
+    st, _, _ = make()
+    assert st.status() is None
+
+
+def test_status_returns_snapshot_when_pending():
+    st, _, clk = make()
+    st.stage("alpha", "pytest")
+    clk.t += 4.2
+    snap = st.status()
+    assert snap is not None
+    assert snap["target"] == "alpha" and snap["text"] == "pytest"
+    assert abs(snap["age_s"] - 4.2) < 1e-6  # float addition isn't exact
+
+
+def test_status_drops_expired_pending():
+    st, _, clk = make(ttl=10.0)
+    st.stage("alpha", "pytest")
+    clk.t += 20.0  # past TTL
+    assert st.status() is None

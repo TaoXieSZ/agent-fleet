@@ -74,6 +74,24 @@ class RouteStager:
             self._drop_if_expired_locked()
             return self._pending
 
+    def status(self) -> Optional[dict]:
+        """Public snapshot of any pending command (for board / dashboards).
+
+        Returns `{"target", "text", "age_s"}` when something is staged, else
+        `None`. Computed under the lock so the age matches the staged_at the
+        TTL check just used.
+        """
+        with self._lock:
+            self._drop_if_expired_locked()
+            p = self._pending
+            if p is None:
+                return None
+            return {
+                "target": p.target,
+                "text": p.text,
+                "age_s": max(0.0, self._clock() - p.staged_at),
+            }
+
     def stage(self, target, text: str) -> None:
         """Stage a command (last-wins), resetting the TTL.
 

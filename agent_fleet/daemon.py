@@ -17,6 +17,9 @@ Protocol (newline-delimited JSON over Unix socket):
       → {"ok": true, "fired": true}           // route ran (focus + type + Enter)
     {"action": "cancel_route"}
       → {"ok": true, "fired": true}           // pending dropped (false if nothing was pending)
+    {"action": "status_route"}
+      → {"ok": true, "staged": {"target": "alpha", "text": "pytest", "age_s": 4.2}}
+                                              // or "staged": null when nothing's pending
 
 `target` may be a NATO nickname (alpha/bravo/…), an unambiguous prefix
 ("alph"), or — for back-compat — a 1-based number (int or digit string).
@@ -70,6 +73,11 @@ async def _handle_client(
         log.info("stage_route target=%r text=%r -> %s",
                  target, head.get("text"), ack)
         writer.write((json.dumps(ack) + "\n").encode())
+
+    elif action == "status_route":
+        # Read-only snapshot — no lock contention with stage/confirm/cancel
+        # beyond the brief peek inside stager.status().
+        writer.write((json.dumps({"ok": True, "staged": stager.status()}) + "\n").encode())
 
     elif action in ("confirm_route", "cancel_route"):
         loop = asyncio.get_running_loop()

@@ -270,6 +270,126 @@ def test_route_unknown_number_raises_and_sends_nothing():
     assert all(not (len(call) > 2 and call[2] == "surface.send_text") for call in m.calls)
 
 
+def test_extract_details_collects_tail_of_non_glyph_lines():
+    # Shell-style pane: no signal heads, tail buffer should fill with raw output.
+    text = "\n".join([
+        "collected 41 items",
+        "tests/test_cmux_control.py .....",
+        "tests/test_stager.py ........",
+        "41 passed in 0.04s",
+    ])
+    d = cc._extract_details(text)
+    assert d.activity == "" and d.response == "" and d.prompt == ""
+    assert d.tail == (
+        "tests/test_cmux_control.py .....",
+        "tests/test_stager.py ........",
+        "41 passed in 0.04s",
+    )
+
+
+def test_extract_details_tail_skips_glyph_signal_lines():
+    # Claude-style pane: ❯ / ⏺ / ✻ lines feed the signal slots and must NOT
+    # also appear in `tail`, or the card would double-print them.
+    text = "\n".join([
+        "build context done",
+        "❯ run pytest",
+        "⏺ Done. 41 passed.",
+        "✻ Brewed for 7s",
+    ])
+    d = cc._extract_details(text)
+    assert d.prompt.endswith("run pytest")
+    assert d.response.endswith("41 passed.")
+    assert d.activity.endswith("Brewed for 7s")
+    assert d.tail == ("build context done",)
+
+
+def test_extract_details_tail_skips_omc_hud_line():
+    text = "\n".join([
+        "[OMC#4.13.4] | 5h:24%(2h48m) wk:5% sn:0% | session:60m | ctx:5%",
+        "real output line",
+    ])
+    d = cc._extract_details(text)
+    assert d.hud.startswith("ctx 5%")
+    assert d.tail == ("real output line",)
+
+
+def test_workspace_title_carried_through_build_sessions():
+    ws = json.dumps({"workspaces": [
+        {"id": "W", "index": 0, "selected": True, "current_directory": "/p",
+         "title": "agent-fleet"}]})
+    surf = {"W": json.dumps({"surfaces": [
+        {"id": "S", "index": 0, "type": "terminal", "title": "claude · abc"}]})}
+    s = _build(ws, surf)
+    assert s[0].workspace_title == "agent-fleet"
+
+
+def test_compute_workspace_renames_single_ship_adds_prefix():
+    s = [Session(number=1, nickname="alpha", surface="S", workspace="W",
+                 title="claude", cwd="/p", focused=True,
+                 workspace_title="agent-fleet")]
+    assert cc.compute_workspace_renames(s) == [("W", "alpha · agent-fleet")]
+
+
+def test_compute_workspace_renames_empty_original_uses_bare_nickname():
+    s = [Session(number=1, nickname="alpha", surface="S", workspace="W",
+                 title="x", cwd="/p", focused=True, workspace_title="")]
+    assert cc.compute_workspace_renames(s) == [("W", "alpha")]
+
+
+def test_compute_workspace_renames_is_idempotent():
+    # Already-prefixed title → no-op (don't accumulate `alpha · alpha · …`).
+    s = [Session(number=1, nickname="alpha", surface="S", workspace="W",
+                 title="x", cwd="/p", focused=True,
+                 workspace_title="alpha · agent-fleet")]
+    assert cc.compute_workspace_renames(s) == []
+    # Bare-nickname-only title is also stable.
+    s = [Session(number=1, nickname="alpha", surface="S", workspace="W",
+                 title="x", cwd="/p", focused=True, workspace_title="alpha")]
+    assert cc.compute_workspace_renames(s) == []
+
+
+def test_compute_workspace_renames_skips_multi_ship_workspace():
+    # Two terminal surfaces in the same workspace → ambiguous, skip.
+    s = [
+        Session(number=1, nickname="alpha", surface="S1", workspace="W",
+                title="a", cwd="/p", focused=True, workspace_title="proj"),
+        Session(number=2, nickname="bravo", surface="S2", workspace="W",
+                title="b", cwd="/p", focused=False, workspace_title="proj"),
+    ]
+    assert cc.compute_workspace_renames(s) == []
+
+
+def test_compute_workspace_renames_strips_stale_prefix_on_renamed_ship():
+    # If a workspace was previously renamed under a different nickname
+    # (shouldn't happen in practice since nicknames never recycle, but be safe),
+    # the prior prefix is stripped before adding the current one.
+    s = [Session(number=1, nickname="bravo", surface="S", workspace="W",
+                 title="x", cwd="/p", focused=True,
+                 workspace_title="alpha · agent-fleet")]
+    assert cc.compute_workspace_renames(s) == [("W", "bravo · agent-fleet")]
+
+
+def test_sync_workspace_titles_issues_rename_rpc():
+    m = MockRunner()
+    c = CmuxClient(binary="CMUX", runner=m)
+    s = [Session(number=1, nickname="alpha", surface="S", workspace="W",
+                 title="x", cwd="/p", focused=True, workspace_title="proj")]
+    assert c.sync_workspace_titles(s) == 1
+    call = _method_call(m.calls, "workspace.rename")
+    assert call == ["CMUX", "rpc", "workspace.rename",
+                    json.dumps({"workspace_id": "W", "title": "alpha · proj"})]
+
+
+def test_sync_workspace_titles_noop_when_already_correct():
+    m = MockRunner()
+    c = CmuxClient(binary="CMUX", runner=m)
+    s = [Session(number=1, nickname="alpha", surface="S", workspace="W",
+                 title="x", cwd="/p", focused=True,
+                 workspace_title="alpha · proj")]
+    assert c.sync_workspace_titles(s) == 0
+    assert all("workspace.rename" not in call for call in m.calls)
+
+
 def test_route_verbatim_text_not_rewritten():
     m = MockRunner()
     c = CmuxClient(binary="CMUX", runner=m)

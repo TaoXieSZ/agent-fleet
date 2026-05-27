@@ -161,6 +161,7 @@ class Session:
     title: str         # terminal title (repo·id for Claude Code, user@host:~/p for a shell)
     cwd: str           # owning workspace current_directory (cmux has no per-pane cwd)
     focused: bool      # the currently focused pane (globally — see build_sessions)
+    workspace_title: str = ""  # owning workspace's title (renameable via workspace.rename)
 
     # Back-compat alias for board.build_board(), which reads `.selected`.
     @property
@@ -194,6 +195,7 @@ def build_sessions(
     for w in workspaces:
         ws_id = w.get("id", "")
         cwd = w.get("current_directory") or ""
+        ws_title = w.get("title") or ""
         ws_selected = bool(w.get("selected"))  # only the active tab carries the focus
         raw = surfaces_by_ws.get(ws_id)
         if not raw:
@@ -223,9 +225,56 @@ def build_sessions(
                     # `focused` is per-workspace; the globally active pane is the
                     # focused surface inside the *selected* workspace.
                     focused=bool(s.get("focused")) and ws_selected,
+                    workspace_title=ws_title,
                 )
             )
     return sessions
+
+
+def _strip_nick_prefix(title: str) -> str:
+    """Drop a leading `<nickname> · ` (or bare `<nickname>`) so re-rename is idempotent.
+
+    `<nickname>` here means any NATO phonetic name we ever hand out — so opening
+    the board twice doesn't accumulate `alpha · alpha · agent-fleet`.
+    """
+    t = title or ""
+    for n in NATO:
+        p = f"{n} · "
+        if t.startswith(p):
+            return t[len(p):]
+        if t == n:
+            return ""
+    return t
+
+
+def compute_workspace_renames(sessions: Sequence[Session]) -> list[tuple[str, str]]:
+    """Decide which workspaces need a `workspace.rename` to surface the nickname.
+
+    Returns `[(workspace_id, desired_title), ...]` for workspaces that:
+      - contain exactly one terminal ship (multi-pane workspaces are ambiguous
+        — which nickname wins? — and skipped in v1);
+      - whose current title doesn't already encode that ship's nickname.
+
+    Title format: `"<nickname> · <original>"` (or bare `"<nickname>"` when the
+    original was empty), so cmux's auto-from-cwd title or a captain-set title
+    is preserved as context.
+    """
+    by_ws: dict[str, list[Session]] = {}
+    for s in sessions:
+        by_ws.setdefault(s.workspace, []).append(s)
+    out: list[tuple[str, str]] = []
+    for ws_id, ships in by_ws.items():
+        if len(ships) != 1 or not ws_id:
+            continue
+        ship = ships[0]
+        if not ship.nickname:
+            continue
+        current = ship.workspace_title or ""
+        base = _strip_nick_prefix(current)
+        desired = f"{ship.nickname} · {base}" if base else ship.nickname
+        if current != desired:
+            out.append((ws_id, desired))
+    return out
 
 
 def resolve(number: int, sessions: Sequence[Session]) -> Optional[str]:
@@ -305,6 +354,7 @@ class PaneDetails:
     prompt: str = ""     # most recent ❯ user prompt
     recap: str = ""      # most recent ※ idle summary
     hud: str = ""        # OMC HUD reformatted compactly (e.g. "ctx 5% · 5h 24% · sn 30m"); "" if absent
+    tail: tuple[str, ...] = ()  # last N non-noise lines (chronological, most-recent last)
 
 
 _HUD_CTX_RE   = _re.compile(r"ctx:(\d+%)")
@@ -335,25 +385,30 @@ def _parse_hud(line: str) -> str:
     return " · ".join(parts)
 
 
-def _extract_details(text: str, scan_lines: int = 80) -> PaneDetails:
+def _extract_details(text: str, scan_lines: int = 80, tail_n: int = 3) -> PaneDetails:
     """Pull the most recent live signal of each kind from a pane's tail.
 
     Walks reverse, filling each field once with the most recent qualifying
     line. OMC HUD is read from `[OMC#…]` lines (otherwise noise) and
-    reformatted via `_parse_hud`.
+    reformatted via `_parse_hud`. Also collects `tail_n` most-recent non-noise
+    lines (chronological order) so the board can show a raw output preview
+    beneath the curated signals — useful for shells (no signals) and as live
+    context next to Claude's summary signals.
     """
     lines = [ln.rstrip() for ln in text.splitlines() if ln.strip()]
     if not lines:
         return PaneDetails()
-    tail = lines[-scan_lines:]
+    window = lines[-scan_lines:]
     bag = {"activity": "", "response": "", "prompt": "", "recap": "", "hud": ""}
-    for ln in reversed(tail):
+    tail_buf: list[str] = []  # collected newest-first while walking
+    for ln in reversed(window):
         s = ln.strip()
         # HUD is technically noise to _smart_status but useful here — check first.
-        if not bag["hud"] and s.lstrip().startswith("[OMC#"):
-            hud = _parse_hud(s)
-            if hud:
-                bag["hud"] = hud
+        if s.lstrip().startswith("[OMC#"):
+            if not bag["hud"]:
+                hud = _parse_hud(s)
+                if hud:
+                    bag["hud"] = hud
             continue
         # Skip banner / separator / half-rendered spinner noise.
         if any(p.search(s) for p in _NOISE_PATTERNS):
@@ -369,9 +424,16 @@ def _extract_details(text: str, scan_lines: int = 80) -> PaneDetails:
             bag["prompt"] = s
         elif head == "※" and not bag["recap"]:
             bag["recap"] = s
-        if all(bag.values()):
+        # Tail is for raw output (shell echo, build progress) that the curated
+        # signal slots above don't already display — skip glyph-head lines or
+        # the card duplicates `❯ … / ⏺ … / ✻ …` twice.
+        if len(tail_buf) < tail_n and head not in _ALL_HEADS:
+            tail_buf.append(s)
+        # Walk continues even after all signals fill so the tail buffer can
+        # complete — but cap once both are satisfied to bound work.
+        if all(bag.values()) and len(tail_buf) >= tail_n:
             break
-    return PaneDetails(**bag)
+    return PaneDetails(**bag, tail=tuple(reversed(tail_buf)))
 
 
 def _smart_status(text: str, scan_lines: int = 60) -> str:
@@ -444,6 +506,9 @@ class CmuxClient:
 
     def _read_argv(self, surface: str) -> list[str]:
         return self._rpc_argv("surface.read_text", {"surface_id": surface})
+
+    def _rename_workspace_argv(self, workspace_id: str, title: str) -> list[str]:
+        return self._rpc_argv("workspace.rename", {"workspace_id": workspace_id, "title": title})
 
     # --- operations --------------------------------------------------------
     def list_sessions(self) -> list[Session]:
@@ -524,6 +589,20 @@ class CmuxClient:
         self.run(self._send_text_argv(surface, text))
         self.run(self._send_key_argv(surface, "Enter"))
         return surface
+
+    def sync_workspace_titles(self, sessions: Sequence[Session]) -> int:
+        """Push each single-ship workspace's nickname into its cmux workspace title.
+
+        Idempotent: workspaces already showing the right nickname are skipped.
+        Errors are swallowed per-workspace so one bad rename can't sink the
+        whole board tick. Returns the count of successful renames.
+        """
+        renamed = 0
+        for ws_id, title in compute_workspace_renames(sessions):
+            rc, _out, _err = self.run(self._rename_workspace_argv(ws_id, title))
+            if rc == 0:
+                renamed += 1
+        return renamed
 
     def read_status(self, target) -> str:
         """Return the last non-empty line of the targeted ship's pane."""
