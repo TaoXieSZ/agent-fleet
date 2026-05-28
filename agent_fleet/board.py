@@ -328,28 +328,37 @@ def render_board(rows: list[dict], width: int = _WIDTH, color: bool = True,
 
     for i, r in enumerate(rows):
         sel = bool(r["selected"])
-        nick = (r.get("nickname") or "?").ljust(8)
+        # ljust(9): the longest NATO name ("november") is 8 chars, so pad to 9
+        # to guarantee at least one space before the title column.
+        nick = (r.get("nickname") or "?").ljust(9)
+        # The 1-based number is what voice addressing says ("一号" / "session 2"),
+        # since Chinese ASR can't reliably transcribe NATO nicknames. Show it as
+        # a dim badge before the nickname so the captain can see which ship is
+        # which number. NOTE: numbers are positional and drift as panes open/
+        # close — the nickname beside it is the stable id for keyboard/REPL.
+        num_str = str(r.get("number") or "?").rjust(2)
         focus_mark = "▶" if sel else " "
         hud = (r.get("hud") or "").strip()
         cwd = _short_cwd(r.get("cwd") or "")
 
-        # ── L1 (title): focus + nickname + title  [HUD right-aligned]
+        # ── L1 (title): focus + number + nickname + title  [HUD right-aligned]
         # CJK / emoji chars in the title take 2 columns each; sizing must be
         # in visual columns (not code points) or the HUD chip gets pushed off
         # the pane and wraps to a second line (the hotel `s\nn 20.6h` bug).
-        lead_visible = 2 + _vis_width(nick)
+        lead_visible = 2 + _vis_width(num_str) + 1 + _vis_width(nick)
         hud_visible = _vis_width(hud) if hud else 0
         max_title = max(8, width - text_offset - lead_visible - hud_visible - 1)
         title_trunc = _truncate_vis(r.get("title") or "", max_title)
         title_padded = _ljust_vis(title_trunc, max_title)
         if color:
             mark_c = f"{_BOLD}{_FG_GREEN}{focus_mark}{_RESET}" if sel else focus_mark
+            num_c = _wrap(num_str, _DIM)
             nick_c = (f"{_REVERSE}{_BOLD}{_FG_CYAN}{nick}{_RESET}"
                       if sel else f"{_BOLD}{_FG_CYAN}{nick}{_RESET}")
             hud_c = _wrap(hud, _DIM, _FG_MAGENTA) if hud else ""
-            l1 = f"{mark_c} {nick_c}{title_padded}{hud_c}"
+            l1 = f"{mark_c} {num_c} {nick_c}{title_padded}{hud_c}"
         else:
-            l1 = f"{focus_mark} {nick}{title_padded}{hud}"
+            l1 = f"{focus_mark} {num_str} {nick}{title_padded}{hud}"
 
         # ── L2 (cwd) + L3+ (glyph rows) — content only, no leading indent.
         cwd_content = _wrap(f"➜ {cwd}", _DIM) if color else f"➜ {cwd}"
