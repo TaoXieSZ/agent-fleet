@@ -12,7 +12,8 @@ Run:
 
 Protocol (newline-delimited JSON over Unix socket):
     {"action": "stage_route", "target": "alpha", "text": "pytest"}
-      → {"ok": true}                          // staged, not yet sent
+      → {"ok": true, "tier": "gray"}          // staged, not yet sent; tier is
+                                              //   white|black|gray risk class
     {"action": "confirm_route"}
       → {"ok": true, "fired": true}           // route ran (focus + type + Enter)
     {"action": "cancel_route"}
@@ -34,6 +35,7 @@ import os
 import sys
 
 from agent_fleet.cmux_control import CmuxClient
+from agent_fleet.permissions import classify
 from agent_fleet.stager import RouteStager
 
 DEFAULT_SOCKET = os.environ.get("AGENT_FLEET_SOCKET", "/tmp/agent-fleet.sock")
@@ -67,7 +69,7 @@ async def _handle_client(
         if "text" in head:
             try:
                 stager.stage(target, str(head["text"]))
-                ack = {"ok": True}
+                ack = {"ok": True, "tier": classify(str(head["text"]))}
             except Exception as e:  # noqa: BLE001
                 ack = {"ok": False, "error": str(e)}
         log.info("stage_route target=%r text=%r -> %s",

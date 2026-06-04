@@ -44,6 +44,7 @@ try:
     from rich.console import Console
     from rich.live import Live
     from rich.panel import Panel
+    from rich.prompt import Prompt
     from rich.spinner import Spinner
 except ImportError:
     sys.stderr.write(
@@ -138,6 +139,9 @@ class ChatState:
     history: list[tuple[str, str]] = field(default_factory=list)  # (user, agent)
     last_envelope: dict | None = None
     last_action_results: list[dict] = field(default_factory=list)
+    # Ships the captain said "always-allow" for — gray-tier commands to these
+    # ships skip the approve/deny prompt. In-memory only: forgotten on exit.
+    always_allow: set[str] = field(default_factory=set)
 
 
 # ─── live board snapshot for the LLM ───────────────────────────────────
@@ -220,9 +224,57 @@ def _call_claude(prompt: str, *, timeout: int) -> dict:
 
 # ─── action execution ──────────────────────────────────────────────────
 
-def _exec_actions(actions: list[dict], board_rows: list[dict]) -> list[dict]:
+def _permission_gate(target: str, text: str, tier: str,
+                     state: "ChatState", console: "Console") -> dict:
+    """Decide whether the staged command fires, asking the captain when needed.
+
+    white            → fire silently (read-only).
+    gray + allowed   → fire silently (captain already always-allowed this ship).
+    gray             → approve / deny / always-allow / edit prompt.
+    black            → double-confirm (type the ship name to fire, else deny).
+
+    Returns the daemon ack dict ({ok, fired}) so the caller renders it the same
+    way as a plain confirm/cancel.
+    """
+    if tier == "white":
+        return daemon_confirm()
+    if tier == "gray" and target in state.always_allow:
+        return daemon_confirm()
+
+    color = "red" if tier == "black" else "yellow"
+    console.print(Panel(f"[bold]{target}[/bold]  ⟵  {text}",
+                        title=f"[{color}]permission · {tier}[/{color}]",
+                        title_align="left", border_style=color, padding=(0, 1)))
+
+    if tier == "black":
+        console.print("[red]⚠ blacklisted command. "
+                      f"Type the ship name ([bold]{target}[/bold]) to approve, "
+                      "anything else denies.[/red]")
+        if Prompt.ask("confirm").strip().lower() == target:
+            return daemon_confirm()
+        return daemon_cancel()
+
+    # gray
+    choice = Prompt.ask("approve",
+                        choices=["a", "d", "w", "e"], default="d",
+                        show_choices=True)
+    if choice == "a":
+        return daemon_confirm()
+    if choice == "w":
+        state.always_allow.add(target)
+        return daemon_confirm()
+    if choice == "e":
+        new_text = Prompt.ask("edit command", default=text).strip()
+        daemon_stage(target, new_text)   # single-slot, last-wins → overwrites
+        return daemon_confirm()
+    return daemon_cancel()
+
+
+def _exec_actions(actions: list[dict], board_rows: list[dict],
+                  state: "ChatState", console: "Console") -> list[dict]:
     valid_nicks = {r.get("nickname") for r in board_rows if r.get("nickname")}
     results: list[dict] = []
+    pending: tuple[str, str, str] | None = None  # (target, text, tier)
     for a in actions:
         kind = a.get("type")
         if kind == "stage":
@@ -231,9 +283,16 @@ def _exec_actions(actions: list[dict], board_rows: list[dict]) -> list[dict]:
                 results.append({"action": a, "ok": False,
                                 "error": f"nickname {target!r} not on board"})
                 continue
-            results.append({"action": a, "result": daemon_stage(target, str(text))})
+            res = daemon_stage(target, str(text))
+            pending = (target, str(text), res.get("tier", "gray"))
+            results.append({"action": a, "result": res})
         elif kind == "confirm":
-            results.append({"action": a, "result": daemon_confirm()})
+            if pending is None:
+                # No stage this turn — honor a bare confirm (legacy / re-confirm).
+                res = daemon_confirm()
+            else:
+                res = _permission_gate(*pending, state, console)
+            results.append({"action": a, "result": res})
         elif kind == "cancel":
             results.append({"action": a, "result": daemon_cancel()})
         else:
@@ -353,7 +412,7 @@ def _run_turn(console: Console, state: ChatState, cmux: str, user_text: str, tim
         rows = build_board(CmuxClient(binary=cmux))
     except Exception:  # noqa: BLE001 — render will still show LLM intent
         pass
-    state.last_action_results = _exec_actions(env.get("actions", []) or [], rows)
+    state.last_action_results = _exec_actions(env.get("actions", []) or [], rows, state, console)
     state.history.append((user_text, env.get("reply", "")))
     _render_turn(console, env, state.last_action_results)
 
